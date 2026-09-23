@@ -1,0 +1,207 @@
+---
+title: "Atividade"
+author: "matheus"
+format: html
+editor: visual
+---
+
+## Atividade 31/07/2026:
+
+Carregar pacotes do MICRODATASUS e DPLYR para começar a atividade:
+
+```{r}
+library(microdatasus)
+library(dplyr)
+```
+
+Carregar dados do SINAN de Leishmaniose visceral do MICRODATASUS:
+
+```{r}
+#' SINAN Leishmaniose Visceral sample
+#'
+#' SINAN Leishmaniose Visceral sample with the first 100 rows from the 2023 file.
+#'
+"sinan_leishmaniose_visceral_sample"
+```
+
+Dados de 2019 a 2025 e seleção de variáveis:
+
+```{r}
+lv_raw <- fetch_datasus(
+   year_start = 2019,
+   year_end = 2025,
+   information_system = "SINAN-LEISHMANIOSE-VISCERAL",
+    vars = c(
+      "NU_ANO",
+      "SG_UF_NOT",
+      "ID_MUNICIP"
+    )
+) 
+```
+
+```{r}
+glimpse(lv_raw)
+head(lv_raw)
+```
+
+Processar o SINAN:
+
+```{r}
+lv <- process_sinan_leishmaniose_visceral(lv_raw)
+glimpse(lv)
+```
+
+Filtrar apenas o RJ:
+
+```{r}
+lv_rj <- lv |>
+  filter(SG_UF_NOT == "Rio de Janeiro")
+```
+
+Casos por ano:
+
+```{r}
+casos_ano <- lv_rj |>
+  group_by(NU_ANO) |>
+  summarise(
+    casos = n()
+  )
+```
+
+Gráfico de linha:
+
+```{r}
+library(ggplot2)
+ggplot(casos_ano, aes(x = NU_ANO, y = casos, group = 1)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  labs(
+    title = "Casos de Leishmaniose Visceral no RJ (2019-2025)",
+    x = "Ano",
+    y = "Número de casos"
+  ) 
+```
+
+Gráfico de barras:
+
+```{r}
+ggplot(casos_ano, aes(x = NU_ANO, y = casos)) +
+  geom_col(fill = "lightblue") +
+  labs(
+    title = "Casos de Leishmaniose Visceral no RJ (2019-2025)",
+    x = "Ano",
+    y = "Número de casos"
+  )
+```
+
+**Etapa 2:**
+
+MAPA
+
+Baixando dados:
+
+```{r}
+library(geobr)
+library(sf)
+library(dplyr)
+library(ggplot2)
+```
+
+Baixando rede dos municípios:
+
+```{r}
+municipios_rj <- read_municipality(
+  code_muni = 33,
+  year = 2020,
+  simplified = TRUE,
+  cache = FALSE
+)
+
+if (is.null(municipios_rj)) {
+  arquivo_malha <- tempfile(fileext = ".parquet")
+  
+  download.file(
+    "https://github.com/ipea/geobr_prep_data/releases/download/v2.0.0/municipalities_2020_simplified.parquet",
+    arquivo_malha,
+    mode = "wb"
+  )
+  
+  municipios_rj <- arrow::open_dataset(arquivo_malha) |>
+    filter(abbrev_state == "RJ") |>
+    collect()
+  
+  geometria <- st_as_sfc(
+    municipios_rj$geometry,
+    EWKB = TRUE,
+    crs = 4674
+  )
+  
+  municipios_rj <- municipios_rj |>
+    select(-geometry) |>
+    st_as_sf(geometry = geometria)
+}
+```
+
+Tabela casos de municipio e ano:
+
+```{r}
+casos_municipio_ano <- lv_rj |>
+  group_by(ID_MUNICIP, NU_ANO) |>
+  summarise(
+    casos = n(),
+    .groups = "drop"
+  )
+```
+
+Juntando dados:
+
+```{r}
+mapa_lv <- municipios_rj |>
+  mutate(ID_MUNICIP = substr(as.character(code_muni), 1, 6)) |>
+  left_join(casos_municipio_ano, by = "ID_MUNICIP") |>
+  st_transform(4326)
+```
+
+Municípios:
+
+```{r}
+mapa_lv <- municipios_rj |>
+  mutate(ID_MUNICIP = substr(as.character(code_muni), 1, 6)) |>
+  left_join(casos_municipio_ano, by = "ID_MUNICIP")
+```
+
+Tabela de casos de 2023, que teve mais casos:
+
+```{r}
+casos_2023 <- lv_rj |>
+  filter(NU_ANO == 2023) |>
+  count(ID_MUNICIP, name = "casos")
+mapa_2023 <- municipios_rj |>
+  mutate(ID_MUNICIP = substr(as.character(code_muni), 1, 6)) |>
+  left_join(casos_2023, by = "ID_MUNICIP") |>
+  mutate(
+    casos = ifelse(is.na(casos), 0, casos),
+    Ocorrência = ifelse(casos > 0, "Com casos", "Sem casos")
+  )
+```
+
+Mapa de 2023:
+
+```{r}
+ggplot(mapa_2023) +
+  geom_sf(aes(fill = Ocorrência),
+    color = "black",
+    linewidth = 0.1
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Com casos" = "lightblue",
+      "Sem casos" = "grey"
+    )
+  ) +
+  labs(
+    title = "Leishmaniose Visceral no RJ - 2023",
+    fill = ""
+  ) +
+  theme_void()
+```
